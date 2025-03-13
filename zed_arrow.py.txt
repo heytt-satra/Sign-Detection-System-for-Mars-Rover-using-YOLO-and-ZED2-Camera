@@ -1,0 +1,152 @@
+import os
+from ultralytics import YOLO
+import cv2
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+import time
+import pyzed.sl as sl
+
+# Load YOLO model
+model_path = "C:/Users/conne/Downloads/Tanay-20241007T171640Z-001/Tanay/mix_50.pt"
+model = YOLO(model_path)
+output_dir = "extracted_frames"
+
+# Ensure the output directory exists
+os.makedirs(output_dir, exist_ok=True)
+
+# Load TensorFlow model
+filepath = 'C:/Users/conne/Downloads/Tanay-20241007T171640Z-001/Tanay/EfficentModel_Mix_20epoch'
+direction_model = keras.models.load_model(filepath, compile=False)
+
+def array2dir(array):
+    conf = 0.8
+    if array[0][0] > conf and array[0][0] > array[0][1] and array[0][0] > array[0][2]:
+        print("Left")
+        return "Left"
+
+    elif array[0][1] > conf and array[0][1] > array[0][0] and array[0][1] > array[0][2]:
+        print("Right")
+        return "Right"
+    else:
+        print("No object found")
+        return "Mistake!"
+
+x = [[0.0, 0.0, 0.0]]
+x = np.array(x)
+
+# Initialize ZED2 camera
+zed = sl.Camera()
+
+# Set initialization parameters
+init_params = sl.InitParameters()
+init_params.camera_resolution = sl.RESOLUTION.HD2K  # Set resolution (VGA = 640x480)
+init_params.depth_mode = sl.DEPTH_MODE.ULTRA   # Enable depth mode
+init_params.coordinate_units = sl.UNIT.MILLIMETER       # Set coordinate units to meters
+# init_params.camera_fps = 30                      # Optional: Set FPS if needed
+
+# Open the camera
+err = zed.open(init_params)
+if err != sl.ERROR_CODE.SUCCESS:
+    print(repr(err))
+    zed.close()
+    exit(1)
+
+runtime_params = sl.RuntimeParameters()
+# runtime_params.sensing_mode = sl.SENSING_MODE.STANDARD  # Optional: Set sensing mode
+
+# Prepare Mat objects to hold the images and depth
+image_zed = sl.Mat()
+depth_map = sl.Mat()
+
+# Set the frame processing rate limit (frames per second)
+frame_skip = 1
+frame_count = 0
+
+print("ZED2 camera is now capturing. Press 'q' to exit.")
+
+try:
+    while True:
+        # Grab a new frame
+        if zed.grab(runtime_params) == sl.ERROR_CODE.SUCCESS:
+            # Retrieve the left image in BGRA format
+            zed.retrieve_image(image_zed, sl.VIEW.LEFT)
+            frame = image_zed.get_data()
+
+            # Retrieve the depth map
+            zed.retrieve_measure(depth_map, sl.MEASURE.DEPTH)
+            depth_map_np = depth_map.get_data()  # Depth in meters
+
+            # Convert BGRA to BGR to remove the alpha channel
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+            frame_count += 1
+
+            # Process every `frame_skip` frames
+            if frame_count % frame_skip == 0:
+                # Perform object detection
+                results = model(frame)[0]
+
+                # Draw bounding boxes and labels
+                for result in results.boxes.data.tolist():
+                    x1, y1, x2, y2, score, class_id = result
+
+                    if score > 0.5:
+                        # Extract the frame from the bounding box
+                        extracted_frame = frame[int(y1):int(y2), int(x1):int(x2)]
+                        try:
+                            img = cv2.resize(extracted_frame, (300, 300))
+                        except:
+                            img = cv2.resize(extracted_frame, (224, 224))
+                        img = np.asarray(img)
+                        img = np.expand_dims(img, axis=0)
+                        output = direction_model.predict(img)
+
+                        ans = array2dir(output)
+
+                        # Calculate the center of the bounding box
+                        center_x = int((x1 + x2) / 2)
+                        center_y = int((y1 + y2) / 2)
+
+                        # Ensure center coordinates are within image bounds
+                        center_x = np.clip(center_x, 0, depth_map_np.shape[1] - 1)
+                        center_y = np.clip(center_y, 0, depth_map_np.shape[0] - 1)
+
+                        # Get depth value at the center coordinate
+                        depth = depth_map_np[center_y, center_x]
+
+                        # Handle invalid depth values
+                        if np.isfinite(depth):
+                            depth_text = f"Depth: {depth:.2f}mm"
+                        else:
+                            depth_text = "Depth: N/A"
+
+                        # Display the center coordinates and depth on the frame
+                        text = f"{ans}, {results.names[int(class_id)].upper()}, Center: ({center_x}, {center_y}), {depth_text}"
+                        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                        cv2.putText(frame, text, (int(x1), int(y1 - 10)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2, cv2.LINE_AA)
+
+                        # Save the extracted frame
+                        output_path = os.path.join(output_dir, f"extracted_frame_{ans}_{round(score, 2)}_{int(class_id)}.jpg")
+                        cv2.imwrite(output_path, extracted_frame)
+
+                        # Print the center coordinates and depth
+                        print(f"Detected box center at: ({center_x}, {center_y}), Depth: {depth_text}")
+                        print(f"Extracted frame saved at: {output_path}")
+
+            # Display the frame
+            cv2.imshow("YOLO Object Detection - ZED2", frame)
+
+            # Break the loop if 'q' key is pressed
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        else:
+            print("Failed to grab frame from ZED2 camera.")
+            break
+except KeyboardInterrupt:
+    print("Interrupted by user.")
+
+# Clean up
+zed.close()
+cv2.destroyAllWindows()
