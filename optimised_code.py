@@ -7,11 +7,11 @@ from tensorflow import keras
 import time
 
 # Load YOLO model
-model_path = "C:/Users/conne/Downloads/Tanay-20241007T171640Z-001/Tanay/mix_50.pt"
+model_path = "C:/Users/conne/Downloads/Heytt-20241007T171640Z-001/Heytt/mix_50.pt"
 model = YOLO(model_path)
 output_dir = "extracted_frames"
 
-filepath = 'C:/Users/conne/Downloads/Tanay-20241007T171640Z-001/Tanay/EfficentModel_Mix_20epoch'
+filepath = 'C:/Users/conne/Downloads/Heytt-20241007T171640Z-001/Heytt/EfficentModel_Mix_20epoch'
 direction_model = keras.models.load_model(filepath, compile=False)
 
 def array2dir(array):
@@ -42,7 +42,7 @@ x = [[0.0, 0.0, 0.0]]
 x = np.array(x)
 
 # Open the camera
-video_path = 'C:/Users/conne/Downloads/Tanay-20241007T171640Z-001/Tanay/test_vid2.mp4'
+video_path = 'C:/Users/conne/Downloads/Heytt-20241007T171640Z-001/Heytt/test_vid2.mp4'
 cap = cv2.VideoCapture(0)
 
 # Set the frame dimensions (adjust based on your camera)
